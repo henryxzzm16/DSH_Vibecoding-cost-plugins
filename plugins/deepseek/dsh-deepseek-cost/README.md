@@ -1,12 +1,14 @@
 # dsh-deepseek-cost
 
-DSH 插件：对话输入区显示**本会话 DeepSeek API 费用**与**账户余额**，按真实模型与北京峰谷分时计价。
+DSH 插件：对话输入区显示**本会话 DeepSeek API 费用**与**账户余额**，按真实模型与北京峰谷分时计价。全部由 AI 搭建，纯 JavaScript、无构建步骤。
 
 ```
 ● ¥0.0034 │ 余额 ¥12.34
 ```
 
 绿点 = 空闲，红点 = 高峰；悬停展开完整价格表、tokens 明细与峰谷分布。配色走 DSH 主题变量，跟随「设置 → 外观」。
+
+**静态 bundle 插件**：跟着 DSH 一起启动，重启后依然在，无审批流程。
 
 ## 价格
 
@@ -22,14 +24,14 @@ DSH 插件：对话输入区显示**本会话 DeepSeek API 费用**与**账户�
 
 ## 原理
 
-- **Host**（`lib/index.js`）折叠会话日志：`request/header` 决定当时用的模型，`assistant/message` 带 `usage`，按调用发生时刻的北京时段逐次计价累加 —— **中途 flash 换 pro 会按各自单价分别计费**。
+- **Host**（`lib/index.js`）折叠会话日志：`request/header` 决定当时用的模型，`assistant/message` 带 `usage`，按调用发生时刻的北京时段逐次计价累加 —— 中途 flash 换 pro 会按各自单价分别计费。
 - **Client**（`lib/client.js`）注册 `conversation.input.right` 胶囊，轮询 `/api/dsh-deepseek-cost/snapshot`。
 - 余额经 `ctx.subprocess` 调 `curl` 请求 `GET /user/balance`，API key 从 `credentials` 解析后经 stdin 传入（不进 argv、不落盘）；成功缓存 60s，失败退避 10s。
 
 ## 安装
 
 ```powershell
-dsh plugin --profile web add link:C:\path\to\dsh-deepseek-cost
+dsh plugin --profile web add link:D:\桌面\DSH\dsh-deepseek-cost
 ```
 
 装完**重启 DSH** 生效。手工装法：`package.json` 的 `dsh.profile.bundles` 追加 `dsh-deepseek-cost`，并在 `profiles\web\node_modules\` 放一个指向本包的 junction。
