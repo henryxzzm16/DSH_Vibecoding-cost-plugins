@@ -1,0 +1,15 @@
+# 早期 userscript 方案的残留（已归档到仓库外的 _archive/，不应进版本库）
+/deepseek-cost-meter.user.js
+/_ds_cost_core_test.js
+/_ds_cost_smoke_test.js
+
+# 归档目录
+/_archive/
+
+# 一次性校验克隆
+/_verify_clone/
+
+# 编辑器 / 系统
+.DS_Store
+Thumbs.db
+*.swp
