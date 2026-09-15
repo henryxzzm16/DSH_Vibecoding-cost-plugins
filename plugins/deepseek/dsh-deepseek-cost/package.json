@@ -1,0 +1,40 @@
+{
+  "name": "dsh-deepseek-cost",
+  "version": "2.0.0",
+  "private": true,
+  "description": "DeepSeek 会话费用与账户余额：对话输入区实时费用胶囊，按真实模型与北京峰谷分时计价",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web"
+    },
+    "compatibility": {
+      "dshReleases": {
+        "0.1.5-rc.1": "compatible"
+      }
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.2",
+    "@deepseek-ai/dsh-session-projection": "^0.1.5-rc.2",
+    "zod": "^4.4.3"
+  },
+  "license": "MIT"
+}

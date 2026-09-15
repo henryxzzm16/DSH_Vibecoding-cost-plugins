@@ -5,12 +5,15 @@ on: [push, pull_request]
 jobs:
   test:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/deepseek/dsh-deepseek-cost
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: 20
+      - name: 浏览器半边语法门禁
+        run: node --check lib/client.js
       - name: 计价核心自检
-        run: node plugins/deepseek/dsh-deepseek-cost/core.test.cjs
-      - name: 插件语法门禁
-        run: node plugins/deepseek/dsh-deepseek-cost/check-plugin.cjs
+        run: node core.test.cjs

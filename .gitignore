@@ -9,6 +9,9 @@
 # 一次性校验克隆
 /_verify_clone/
 
+# 离线自检用的依赖软链（真机上是 profile 的 node_modules）
+node_modules/
+
 # 编辑器 / 系统
 .DS_Store
 Thumbs.db

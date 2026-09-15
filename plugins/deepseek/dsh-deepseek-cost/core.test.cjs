@@ -1,104 +1,152 @@
-/* 纯核心自检：node core.test.cjs */
-const fs = require('fs');
-const path = require('path');
-const src = fs.readFileSync(path.join(__dirname, 'core.js'), 'utf8');
-const core = new Function(src +
-  '\nreturn {RATE,PRICING,isPeak,buckets,costOf,modelKey,fmtCny,fmtTokens,bjParts,priceOf,parseBalance,curlQuote};')();
+/**
+ * dsh-deepseek-cost — 纯函数单测（host 折叠逻辑）
+ * 运行：node --test core.test.cjs   （或 node core.test.cjs）
+ *
+ * 这里不启动 DSH：折叠函数与计价函数都是纯函数，直接喂事件对象即可。
+ */
+const path = require('node:path')
+const { pathToFileURL } = require('node:url')
 
-let fails = 0;
-const ok = (name, cond, extra) => {
-  if (cond) console.log('ok   ' + name);
-  else { fails++; console.log('FAIL ' + name + (extra === undefined ? '' : '  -> ' + extra)); }
-};
-const at = (iso) => Date.parse(iso);
-const CNY = core.RATE;
+let mod = null
 
-console.log('--- 峰谷判定（北京时间，UTC 构造）---');
-ok('周一 09:00 = 高峰（下界）', core.isPeak(at('2026-02-02T01:00:00Z')) === true);
-ok('周一 08:59 = 空闲', core.isPeak(at('2026-02-02T00:59:00Z')) === false);
-ok('周一 12:00 = 空闲（右开）', core.isPeak(at('2026-02-02T04:00:00Z')) === false);
-ok('周一 14:00 = 高峰', core.isPeak(at('2026-02-02T06:00:00Z')) === true);
-ok('周一 17:59 = 高峰', core.isPeak(at('2026-02-02T09:59:00Z')) === true);
-ok('周一 18:00 = 空闲（右开）', core.isPeak(at('2026-02-02T10:00:00Z')) === false);
-ok('周六 10:00 = 空闲（周末）', core.isPeak(at('2026-02-07T02:00:00Z')) === false);
-ok('周日 15:00 = 空闲（周末）', core.isPeak(at('2026-02-08T07:00:00Z')) === false);
-ok('bjParts 时区无关（北京 10:00）', core.bjParts(at('2026-02-02T02:00:00Z')).text === '10:00');
+function approx(a, b, eps) {
+  return Math.abs(a - b) <= (eps === undefined ? 1e-9 : eps)
+}
 
-console.log('--- 模型识别（仅 deepseek）---');
-ok('deepseek-flash -> flash', core.modelKey('deepseek-flash') === 'flash');
-ok('deepseek-v4-pro -> pro', core.modelKey('deepseek-v4-pro') === 'pro');
-ok('DeepSeek-V4.1-Flash -> flash', core.modelKey('DeepSeek-V4.1-Flash') === 'flash');
-ok('deepseek 无档位 -> flash', core.modelKey('deepseek-chat') === 'flash');
-ok('gpt-4o 不计价', core.modelKey('gpt-4o') === null);
-ok('claude-3.5-sonnet 不计价', core.modelKey('claude-3.5-sonnet') === null);
-ok('gemini-pro 不计价（含 pro 也不算）', core.modelKey('gemini-pro') === null);
-ok('空串不计价', core.modelKey('') === null);
+const cases = []
+function test(name, fn) {
+  cases.push({ name, fn })
+}
 
-console.log('--- usage 桶映射 ---');
-const b1 = core.buckets({ inputTokens: 200, cacheReadTokens: 800, cacheWriteTokens: 0, outputTokens: 300 });
-ok('输入拆分 hit/miss', b1.hit === 800 && b1.miss === 200 && b1.out === 300, JSON.stringify(b1));
-ok('total 汇总', b1.total === 1300, String(b1.total));
-const b2 = core.buckets({ inputTokens: 500, outputTokens: 100 });
-ok('无缓存字段 -> 全按未命中', b2.hit === 0 && b2.miss === 500 && b2.out === 100, JSON.stringify(b2));
-const b3 = core.buckets({ cacheWriteTokens: 900, outputTokens: 50 });
-ok('纯建缓存（无 inputTokens）：miss 用 write 兜底', b3.miss === 900, JSON.stringify(b3));
-const b3b = core.buckets({ inputTokens: 100, cacheWriteTokens: 900, outputTokens: 50 });
-ok('inputTokens 优先，不与 write 重复计费', b3b.miss === 100 && b3b.total === 150, JSON.stringify(b3b));
-ok('负数/脏值归零', core.buckets({ inputTokens: -5, cacheReadTokens: NaN, outputTokens: '9' }).total === 0);
+/** 造一个 assistant/message 事件 */
+function usageEvent(usage, time) {
+  return { type: 'assistant/message', seq: 1, time: time, data: { turn: 1, step: 1, message: {}, stream: [], usage } }
+}
 
-console.log('--- 计价（官方 USD 价 x RATE = 元）---');
-const u = (hit, miss, out) => ({ inputTokens: miss, cacheReadTokens: hit, outputTokens: out });
-ok('flash 空闲 1M 命中 = $0.003', Math.abs(core.costOf(u(1e6, 0, 0), 'flash', false) - 0.003 * CNY) < 1e-9);
-ok('flash 高峰 1M 命中 = $0.006', Math.abs(core.costOf(u(1e6, 0, 0), 'flash', true) - 0.006 * CNY) < 1e-9);
-ok('flash 空闲 1M 未命中 = $0.15', Math.abs(core.costOf(u(0, 1e6, 0), 'flash', false) - 0.15 * CNY) < 1e-9);
-ok('flash 高峰 1M 输出 = $1.20', Math.abs(core.costOf(u(0, 0, 1e6), 'flash', true) - 1.20 * CNY) < 1e-9);
-ok('pro 空闲 1M 命中 = $0.022', Math.abs(core.costOf(u(1e6, 0, 0), 'pro', false) - 0.022 * CNY) < 1e-9);
-ok('pro 高峰 1M未命中+1M输出 = $5.28', Math.abs(core.costOf(u(0, 1e6, 1e6), 'pro', true) - (1.32 + 3.96) * CNY) < 1e-9);
-ok('高峰恰为空闲 2 倍', Math.abs(core.costOf(u(123, 456, 789), 'pro', true) - 2 * core.costOf(u(123, 456, 789), 'pro', false)) < 1e-12);
-ok('缓存创建（inputTokens 缺失时）按未命中价', Math.abs(core.costOf({ cacheWriteTokens: 1e6, outputTokens: 0 }, 'flash', false) - 0.15 * CNY) < 1e-9);
-ok('priceOf 返回元单价', core.priceOf('flash', true).hit === 0.006 * CNY);
+/** 造一个 request/header 事件（决定后续调用的模型） */
+function headerEvent(model, time) {
+  return { type: 'request/header', seq: 0, time: time, data: { header: { config: { provider: 'deepseek', model } } } }
+}
 
-console.log('--- 金额格式化 ---');
-ok('0 -> 0.0000', core.fmtCny(0) === '\u00A50.0000');
-ok('小额 4 位', core.fmtCny(0.001234) === '\u00A50.0012', core.fmtCny(0.001234));
-ok('中额 3 位', core.fmtCny(0.5678) === '\u00A50.568', core.fmtCny(0.5678));
-ok('大额 2 位', core.fmtCny(12.345) === '\u00A512.35', core.fmtCny(12.345));
-ok('fmtTokens 万', core.fmtTokens(16800000) === '1680.00\u4E07', core.fmtTokens(16800000));
-ok('fmtTokens K', core.fmtTokens(1200) === '1.2K', core.fmtTokens(1200));
+// 北京时间 2026-03-04（周三）10:00 = 高峰
+const PEAK_MS = Date.UTC(2026, 2, 4, 2, 0, 0)
+// 北京时间 2026-03-04（周三）20:00 = 空闲
+const OFF_MS = Date.UTC(2026, 2, 4, 12, 0, 0)
+// 北京时间 2026-03-07（周六）10:00 = 周末全天空闲
+const WEEKEND_MS = Date.UTC(2026, 2, 7, 2, 0, 0)
 
-console.log('--- 真实场景：45K 输入(90%命中) + 2K 输出，高峰 flash ---');
-const real = core.costOf({ inputTokens: 4500, cacheReadTokens: 40500, outputTokens: 2000 }, 'flash', true);
-ok('费用落在合理区间 (0.02~0.04 元)', real > 0.02 && real < 0.04, core.fmtCny(real));
+test('模型档位：只有 deepseek 计价，pro 与 flash 分开', () => {
+  const { modelKey } = mod.__test__
+  if (modelKey('deepseek-v4.1-flash') !== 'flash') throw new Error('flash 未识别')
+  if (modelKey('deepseek-v4-pro') !== 'pro') throw new Error('pro 未识别')
+  if (modelKey('gpt-4o') !== null) throw new Error('非 deepseek 不应计价')
+  if (modelKey(undefined) !== null) throw new Error('undefined 不应计价')
+})
 
-console.log('--- curl config 字面量转义 ---');
-ok('普通串包引号', core.curlQuote('sk-abc123') === '"sk-abc123"', core.curlQuote('sk-abc123'));
-ok('双引号被转义', core.curlQuote('a"b') === '"a\\"b"', core.curlQuote('a"b'));
-ok('反斜杠被转义', core.curlQuote('a\\b') === '"a\\\\b"', core.curlQuote('a\\b'));
+test('峰谷判定：周三 10:00 高峰，周三 20:00 空闲，周六 10:00 空闲', () => {
+  const { isPeak } = mod.__test__
+  if (isPeak(PEAK_MS) !== true) throw new Error('周三 10:00 应为高峰')
+  if (isPeak(OFF_MS) !== false) throw new Error('周三 20:00 应为空闲')
+  if (isPeak(WEEKEND_MS) !== false) throw new Error('周六应为空闲')
+})
 
-console.log('--- 余额接口解析 ---');
-const bal = core.parseBalance({
-  is_available: true,
-  balance_infos: [{ currency: 'CNY', total_balance: '12.34', granted_balance: '2.00', topped_up_balance: '10.34' }]
-});
-ok('CNY 余额解析', bal && bal.total === 12.34 && bal.currency === 'CNY' && bal.available === true, JSON.stringify(bal));
-ok('赠送/充值拆分', bal && bal.granted === 2 && bal.topped === 10.34);
-const balUsd = core.parseBalance({
-  is_available: true,
-  balance_infos: [{ currency: 'USD', total_balance: '1.50', granted_balance: '0', topped_up_balance: '1.50' }]
-});
-ok('无 CNY 时取第一项', balUsd && balUsd.total === 1.5 && balUsd.currency === 'USD');
-const balMixed = core.parseBalance({
-  is_available: true,
-  balance_infos: [
-    { currency: 'USD', total_balance: '1.00', granted_balance: '0', topped_up_balance: '1' },
-    { currency: 'CNY', total_balance: '9.99', granted_balance: '0', topped_up_balance: '9.99' }
-  ]
-});
-ok('多币种优先 CNY', balMixed && balMixed.total === 9.99, JSON.stringify(balMixed));
-ok('is_available=false 传递', core.parseBalance({ is_available: false, balance_infos: [{ currency: 'CNY', total_balance: '0' }] }).available === false);
-ok('空 balance_infos -> null', core.parseBalance({ balance_infos: [] }) === null);
-ok('缺字段 -> null', core.parseBalance({}) === null);
-ok('非对象 -> null', core.parseBalance(null) === null && core.parseBalance('x') === null);
+test('flash 空闲价：仅输出 1,000,000 tokens = 0.60 USD × 6.77 = ¥4.062', () => {
+  const { foldUsage, emptyLedger } = mod.__test__
+  const state = Object.assign(emptyLedger('deepseek-v4.1-flash'), { key: 'flash' })
+  const next = foldUsage(state, usageEvent({ uncachedInputTokens: 0, cacheReadTokens: 0, outputTokens: 1000000 }, OFF_MS), 6.77)
+  const want = 0.6 * 6.77
+  if (!approx(next.cost, want, 1e-6)) throw new Error('期望 ' + want + '，实际 ' + next.cost)
+  if (next.calls !== 1) throw new Error('调用次数应为 1')
+  if (next.key !== 'flash') throw new Error('档位应为 flash')
+})
 
-console.log(fails === 0 ? '\nALL PASS' : '\n' + fails + ' FAILED');
-process.exit(fails === 0 ? 0 : 1);
+test('同一份用量在高峰正好是空闲的 2 倍', () => {
+  const { foldUsage, emptyLedger } = mod.__test__
+  const usage = { uncachedInputTokens: 1000000, cacheReadTokens: 500000, outputTokens: 200000 }
+  const base = Object.assign(emptyLedger('deepseek-v4-pro'), { key: 'pro' })
+  const off = foldUsage(base, usageEvent(usage, OFF_MS), 6.77)
+  const peak = foldUsage(base, usageEvent(usage, PEAK_MS), 6.77)
+  if (!approx(peak.cost, off.cost * 2, 1e-6)) throw new Error('高峰应为空闲 2 倍：' + peak.cost + ' vs ' + off.cost)
+})
+
+test('pro/flash 单价表与官方一致，且费用等于按单价复算的结果', () => {
+  const { foldUsage, emptyLedger, pricingOf } = mod.__test__
+  const rate = 6.77
+  const p = pricingOf(rate)
+  // 官方 USD/百万 tokens（空闲档），折算人民币
+  const usd = { flash: { hit: 0.003, miss: 0.15, out: 0.6 }, pro: { hit: 0.022, miss: 0.66, out: 1.98 } }
+  for (const key of ['flash', 'pro']) {
+    for (const field of ['hit', 'miss', 'out']) {
+      if (!approx(p[key].off.cny[field], usd[key][field] * rate, 1e-9)) {
+        throw new Error(key + '.' + field + ' 空闲单价不符：' + p[key].off.cny[field])
+      }
+    }
+    // 高峰 = 空闲 × 2
+    for (const field of ['hit', 'miss', 'out']) {
+      if (!approx(p[key].peak.cny[field], p[key].off.cny[field] * 2, 1e-9)) {
+        throw new Error(key + '.' + field + ' 高峰价应为空闲 2 倍')
+      }
+    }
+  }
+
+  const usage = { uncachedInputTokens: 100000, cacheReadTokens: 10000, outputTokens: 50000 }
+  const expected = (key) =>
+    (10000 * p[key].off.cny.hit + 100000 * p[key].off.cny.miss + 50000 * p[key].off.cny.out) / 1e6
+  const model = { flash: 'deepseek-v4.1-flash', pro: 'deepseek-v4-pro' }
+  for (const key of ['flash', 'pro']) {
+    const got = foldUsage(Object.assign(emptyLedger(model[key]), { key }), usageEvent(usage, OFF_MS), rate)
+    if (!approx(got.cost, expected(key), 1e-9)) {
+      throw new Error(key + ' 费用不符：期望 ' + expected(key) + '，实际 ' + got.cost)
+    }
+  }
+})
+
+test('未命中兜底：inputTokens 别名等价于 uncachedInputTokens', () => {
+  const { foldUsage, emptyLedger } = mod.__test__
+  const state = Object.assign(emptyLedger('deepseek-v4.1-flash'), { key: 'flash' })
+  const a = foldUsage(state, usageEvent({ uncachedInputTokens: 1000, outputTokens: 10 }, OFF_MS), 6.77)
+  const b = foldUsage(state, usageEvent({ inputTokens: 1000, outputTokens: 10 }, OFF_MS), 6.77)
+  if (!approx(a.cost, b.cost, 1e-12)) throw new Error('别名应等价')
+  if (a.miss !== 1000 || b.miss !== 1000) throw new Error('未命中应为 1000')
+})
+
+test('没有 usage 的事件不改变账本（返回同一引用）', () => {
+  const { foldUsage, emptyLedger } = mod.__test__
+  const state = Object.assign(emptyLedger('deepseek-v4.1-flash'), { key: 'flash' })
+  const same = foldUsage(state, { type: 'assistant/message', seq: 2, time: OFF_MS, data: { turn: 1, step: 1 } }, 6.77)
+  if (same !== state) throw new Error('无用量时不应产生新状态')
+})
+
+test('多次调用累加，且峰谷分别记账', () => {
+  const { foldUsage, emptyLedger } = mod.__test__
+  let state = Object.assign(emptyLedger('deepseek-v4-pro'), { key: 'pro' })
+  state = foldUsage(state, usageEvent({ uncachedInputTokens: 1000, outputTokens: 1000 }, PEAK_MS), 6.77)
+  state = foldUsage(state, usageEvent({ uncachedInputTokens: 1000, outputTokens: 1000 }, OFF_MS), 6.77)
+  if (state.calls !== 2) throw new Error('调用次数应为 2')
+  if (!approx(state.cost, state.peakCost + state.offCost, 1e-12)) throw new Error('总额应等于高峰+空闲')
+  if (!(state.peakCost > 0 && state.offCost > 0)) throw new Error('峰谷应各自入账')
+})
+
+test('request/header 切换模型：后续调用按新模型计价', () => {
+  const { modelOfEvent } = mod.__test__
+  if (modelOfEvent(headerEvent('deepseek-v4-pro', OFF_MS)) !== 'deepseek-v4-pro') throw new Error('未取到模型名')
+  if (modelOfEvent(usageEvent({ outputTokens: 1 }, OFF_MS)) !== null) throw new Error('非 header 事件不应返回模型')
+})
+
+const failed = []
+;(async () => {
+  const url = pathToFileURL(path.join(__dirname, 'lib', 'index.js')).href
+  mod = await import(url)
+  for (const c of cases) {
+    try {
+      c.fn()
+      console.log('  ok   ' + c.name)
+    } catch (e) {
+      failed.push(c.name + ': ' + (e && e.message ? e.message : String(e)))
+      console.log('  FAIL ' + c.name + ' -> ' + (e && e.message ? e.message : String(e)))
+    }
+  }
+  console.log('')
+  console.log(cases.length - failed.length + '/' + cases.length + ' passed')
+  if (failed.length > 0) process.exit(1)
+})()

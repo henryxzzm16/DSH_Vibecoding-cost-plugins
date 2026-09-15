@@ -1,83 +1,71 @@
 # dsh-deepseek-cost
 
-DSH（DeepSeek Harness）插件：在对话输入区**实时显示当前会话的 DeepSeek API 费用**，按北京时间**高峰/空闲分时计价**，同时显示**账户余额**。
+DSH 插件：对话输入区显示**本会话 DeepSeek API 费用**与**账户余额**，按真实模型与北京峰谷分时计价。
 
 ```
-● ¥0.0034 │ 余额 ¥12.34      ← 鼠标悬停展开完整价格表
+● ¥0.0034 │ 余额 ¥12.34
 ```
 
-- 绿点 = 空闲时段，红点 = 高峰时段，**每秒**刷新
-- 悬停显示：当前模型两档价格表、缓存命中/未命中/输出 tokens、调用次数、峰谷消费分布、账户余额（含充值/赠送拆分）
-- 配色全部走 DSH 主题变量，跟随「设置 → 外观」自动适配浅色/深色
+绿点 = 空闲，红点 = 高峰；悬停展开完整价格表、tokens 明细与峰谷分布。配色走 DSH 主题变量，跟随「设置 → 外观」。
 
-## 功能
+## 价格
 
-| 需求 | 实现 |
-|---|---|
-| 费用计算 | 监听 `llm/stream` waterfall，读取每个 `usage` chunk（真实用量，非估算） |
-| 缓存命中 | `usage.cacheReadTokens` |
-| 缓存未命中 | `usage.inputTokens`（DSH 适配器已映射为 `prompt_tokens - cache_read`） |
-| 输出 | `usage.outputTokens` |
-| 模型过滤 | 仅模型名含 `deepseek` 时计价，其他厂商不计算 |
-| 分时定价 | 按**每次调用发起时刻**的北京时间取单价，逐次累加 |
-| 累计 | 当前会话总费用 |
-| 余额 | 官方 `GET /user/balance`，60 秒缓存 |
+来源 <https://api-docs.deepseek.com/quick_start/pricing>（USD / 百万 tokens，高峰 = 空闲 × 2）
+
+| 模型 | 缓存命中 | 缓存未命中 | 输出 |
+| --- | --- | --- | --- |
+| V4.1-Flash | 0.003 / 0.006 | 0.15 / 0.30 | 0.60 / 1.20 |
+| V4-Pro | 0.022 / 0.044 | 0.66 / 1.32 | 1.98 / 3.96 |
+
+- 每格为 `空闲 / 高峰`；高峰 = 北京时间周一~周五 `09:00-12:00`、`14:00-18:00`，其余（含周末）空闲。
+- 展示按 `1 USD = 6.77 CNY` 折算（`rate` 可配），仅供参考。
+
+## 原理
+
+- **Host**（`lib/index.js`）折叠会话日志：`request/header` 决定当时用的模型，`assistant/message` 带 `usage`，按调用发生时刻的北京时段逐次计价累加 —— **中途 flash 换 pro 会按各自单价分别计费**。
+- **Client**（`lib/client.js`）注册 `conversation.input.right` 胶囊，轮询 `/api/dsh-deepseek-cost/snapshot`。
+- 余额经 `ctx.subprocess` 调 `curl` 请求 `GET /user/balance`，API key 从 `credentials` 解析后经 stdin 传入（不进 argv、不落盘）；成功缓存 60s，失败退避 10s。
 
 ## 安装
 
-本插件是 **DSH 动态 Cordis 插件**（进程内、纯 JavaScript，不需要构建）。
-
-1. 取 `plugin.js` 全文，按文件内 `HOST 半边` / `CLIENT 半边` 两个分界标记切开；
-2. 两段分别作为 `cordis_define` 的 `code.host` 与 `code.client` 提交；
-3. 用返回的 `pluginId` / `packageId` 调 `cordis_run` 激活（Client 半边需要你在界面上批准）。
-
-> 动态包**不跨进程序列化**：重启 DSH 后需要重新 define + run，且费用账本从零开始累计。
-
-## 定价
-
-价格取自 DeepSeek 官方定价页 <https://api-docs.deepseek.com/quick_start/pricing>（USD / 百万 tokens）：
-
-| 模型 | 项目 | 空闲 | 高峰 |
-|---|---|---|---|
-| `deepseek-flash`（V4.1-Flash） | 输入·缓存命中 | $0.003 | $0.006 |
-| | 输入·缓存未命中 | $0.15 | $0.30 |
-| | 输出 | $0.60 | $1.20 |
-| `deepseek-v4-pro`（V4-Pro） | 输入·缓存命中 | $0.022 | $0.044 |
-| | 输入·缓存未命中 | $0.66 | $1.32 |
-| | 输出 | $1.98 | $3.96 |
-
-- 高峰 = 空闲 × 2；峰时段官方写作 UTC 周一~周五 `01:00-04:00`、`06:00-10:00`，换算成北京时间即 **`09:00-12:00`、`14:00-18:00`**，其余（含周末全天）为空闲。
-- 费用 = (命中×命中单价 + 未命中×未命中单价 + 输出×输出单价) ÷ 1,000,000
-
-**关于人民币**：官方只公布 USD 价格，插件按 `RATE`（默认 `1 USD = 6.77 CNY`）折算展示，悬停面板中写明了汇率。改 `plugin.js` 顶部的 `RATE` 一个常量即可调整。
-
-## 技术说明：动态包沙箱的三个限制
-
-写这个插件时踩到的坑，对写其他 DSH 动态插件同样适用：
-
-1. **全局 `fetch` 被禁用**。沙箱把它换成抛错陷阱，错误信息会指向 cordis `web` 服务。
-2. **`ctx.web.fetch(request)` 只接受 URL，不转发自定义请求头**（它是公开网络抓取器，只发 `user-agent`/`accept`），所以需要 `Authorization` 的接口走不通这条路。
-3. **`ctx.shell` 会给命令套上会话的 sandbox 模式**，本机没有对应 sandbox 后端时会直接拒绝执行。
-
-因此余额请求走 **`ctx.subprocess.spawn`**：它只接受一份完全指定的 spawn 清单（`argv`/`cwd`/`stdio`/`graceMs`），**不做任何默认套用**，会话沙箱策略不参与。另外两个细节：
-
-- **curl 8.3+ 默认关闭 config 文件里的 `$VAR` 展开**，`header = "Authorization: Bearer $DEEPSEEK_API_KEY"` 会把变量名当密钥发出去；必须写字面值（本插件把密钥经 **stdin** 送给子进程，不进 `argv`、不落盘）。
-- 业务错误（如鉴权失败）可能带非 0 退出码返回，因此**先读响应体再判断退出码**，否则只会报出无用的「响应解析失败」。
-
-## 开发
-
-```bash
-node core.test.cjs     # 计价核心自检（51 条断言）
-node check-plugin.cjs  # 语法门禁：确认 plugin.js 两半都能被 DSH 求值
+```powershell
+dsh plugin --profile web add link:C:\path\to\dsh-deepseek-cost
 ```
 
-`core.js` 是与插件同源的纯计算核心（无 Cordis / DOM / 网络依赖），便于独立测试。
+装完**重启 DSH** 生效。手工装法：`package.json` 的 `dsh.profile.bundles` 追加 `dsh-deepseek-cost`，并在 `profiles\web\node_modules\` 放一个指向本包的 junction。
 
-## 已知限制
+## 配置
 
-- 子代理/侧调用携带各自的 session id，其费用计入**各自会话**的显示，不并入当前会话总额。
-- 余额是**账户总额**，不是「本会话剩余」；它不会随本会话消费即时扣减，而是 60 秒后重新拉取。
-- 金额为估算值，实际扣费以官方账单为准。
+在 profile 的 `cordis.patch.yml` 里按 row id 覆盖：
+
+```yaml
+- id: dsh-deepseek-cost
+  config:
+    rate: 7.1
+```
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `rate` | `6.77` | 1 USD 折合人民币，仅用于展示 |
+| `balanceOkMs` | `60000` | 余额成功缓存时长 |
+| `balanceErrMs` | `10000` | 余额失败重试间隔 |
+| `snapshotPath` | `/api/dsh-deepseek-cost/snapshot` | 快照路由，必须位于 `/api` 下 |
+
+## 自检
+
+```bash
+node --check lib/client.js   # 浏览器半边语法
+node core.test.cjs           # 计价/峰谷/折叠 单测
+node verify-mount.cjs        # 假 ctx 调 apply()，验证投影与路由
+```
+
+投影契约要求 `stateSchema` 与 `wire.viewSchema`（zod）都存在 —— 缺失会让**所有会话**的断点恢复报 `reading 'parse'`；注册前有一道护栏，schema 不可用就整体跳过投影。改动折叠语义时必须递增 `stateVersion`。
+
+## 已知边界
+
+- 金额是按官方单价复算的**估算**，不等于官方账单。
+- 只给模型名含 `deepseek` 的调用计价；余额是**账户级**的。
+- 账本在 Host 进程内存里按 sessionId 累积，重启后只从新会话重建（最多 200 个会话）；子代理 / 旁路调用带自己的 session id，不计入本会话。
 
 ## License
 
