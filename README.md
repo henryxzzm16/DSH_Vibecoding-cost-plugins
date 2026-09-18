@@ -1,4 +1,4 @@
-# DSH_Vibecoding-plugins
+# DSH_Vibecoding-cost-plugins
 
 给 **DSH（DeepSeek Harness）** 写的插件集合。**全部由 AI 搭建**，纯 JavaScript、无构建步骤。
 
