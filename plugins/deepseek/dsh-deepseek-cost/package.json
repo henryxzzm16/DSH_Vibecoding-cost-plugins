@@ -13,6 +13,7 @@
     "./package.json": "./package.json"
   },
   "files": [
+    "lib/core.js",
     "lib/index.js",
     "lib/client.js",
     "cordis.patch.yml",

@@ -57,9 +57,15 @@ dsh plugin --profile web add link:D:\桌面\DSH\dsh-deepseek-cost
 
 ```bash
 node --check lib/client.js   # 浏览器半边语法
-node core.test.cjs           # 计价/峰谷/折叠 单测
-node verify-mount.cjs        # 假 ctx 调 apply()，验证投影与路由
+node core.test.cjs           # 计价/峰谷/折叠 单测（零依赖）
+node verify-mount.cjs        # 假 ctx 调 apply()，验证投影与路由（需已装依赖）
 ```
+
+- `core.test.cjs` 只 import `lib/core.js`（**零依赖**的纯函数：模型判定、价格表、
+  峰谷时段、token 桶归一、账本折叠），因此**不需要安装任何依赖就能跑**，CI 里直接跑。
+  如果让单测去 import `lib/index.js`，会连带加载 `@deepseek-ai/schemastery` 与 `zod`，
+  在只做 checkout 的 CI 环境里会 `ERR_MODULE_NOT_FOUND`。
+- `verify-mount.cjs` 需要真实依赖（schema 契约必须用真的 zod 验证），因此只在本地跑。
 
 投影契约要求 `stateSchema` 与 `wire.viewSchema`（zod）都存在 —— 缺失会让**所有会话**的断点恢复报 `reading 'parse'`；注册前有一道护栏，schema 不可用就整体跳过投影。改动折叠语义时必须递增 `stateVersion`。
 
