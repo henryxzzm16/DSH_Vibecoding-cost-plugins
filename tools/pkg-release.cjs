@@ -38,6 +38,7 @@ if (!fs.existsSync(src)) {
 const FILES = [
   'package.json',
   'cordis.patch.yml',
+  'lib/core.js',
   'lib/index.js',
   'lib/client.js',
   'README.md',
