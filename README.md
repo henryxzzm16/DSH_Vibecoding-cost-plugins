@@ -11,11 +11,14 @@
 ## 下载
 
 [Releases](https://github.com/henryxzzm16/DSH_Vibecoding-cost-plugins/releases) 里的
-`dsh-deepseek-cost-v2.0.0.zip`（8 个文件），解压后把目录链接进 profile 即可。
+`dsh-deepseek-cost-v2.0.0.zip`（9 个文件），解压后把目录链接进 profile 即可。
 
 | 版本 | manifestSha256 |
 |---|---|
-| v2.0.0 | `efbbcd5343db64a1f76a1e89d16e48937c23f42c15f5535516fb7dfdb4b7fca2` |
+| v2.0.0 | `f9157cc49c7536092027b30fc7513508c0cb087d0d34efedae440f428314194d` |
+
+> 2026-09-18 重打包：`lib/core.js`（零依赖纯函数，单测用）加入包内，文件数由 8 变 9，
+> `manifestSha256` 随之更新。**旧哈希 `efbbcd53…` 对应重打包前的包，已作废。**
 
 校验用 `manifestSha256`，不用 zip 自身哈希 —— zip 头带时间戳，换打包器或换个时刻字节就会变。
 它是「相对路径 + 字节数 + 文件 sha256」排序后算出来的，同一份源码恒定。
