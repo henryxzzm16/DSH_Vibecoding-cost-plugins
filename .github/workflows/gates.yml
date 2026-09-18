@@ -17,3 +17,16 @@ jobs:
         run: node --check lib/client.js
       - name: 计价核心自检
         run: node core.test.cjs
+
+  package:
+    name: 发布文件集护栏
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+      # 只校验、不产出 zip（--dry-run）：确认发布白名单与源码一致，
+      # 尤其是 import 链有没有断 —— 曾因漏掉 lib/core.js 打出过装不上的包。
+      - name: 校验发布文件集
+        run: node tools/pkg-release.cjs --dry-run

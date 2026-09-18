@@ -15,13 +15,26 @@
 
 | 版本 | manifestSha256 |
 |---|---|
-| v2.0.0 | `f9157cc49c7536092027b30fc7513508c0cb087d0d34efedae440f428314194d` |
+| v2.0.0 | `473f8d19d23346e0e7a1ed4480d4d9e730a4e42ef289fa7863c73b7044099c21` |
 
-> 2026-09-18 重打包：`lib/core.js`（零依赖纯函数，单测用）加入包内，文件数由 8 变 9，
-> `manifestSha256` 随之更新。**旧哈希 `efbbcd53…` 对应重打包前的包，已作废。**
+> 2026-09-18 重打包两次：① `lib/core.js`（零依赖纯函数，单测用）加入包内，文件数由 8 变 9；
+> ② 插件 README 补上「打包发布」一节。哈希依次更新为 `f9157cc4…`、`473f8d19…`。
+> **更早的 `efbbcd53…` 与 `f9157cc4…` 均已作废。**
 
 校验用 `manifestSha256`，不用 zip 自身哈希 —— zip 头带时间戳，换打包器或换个时刻字节就会变。
 它是「相对路径 + 字节数 + 文件 sha256」排序后算出来的，同一份源码恒定。
+
+## 目录
+
+```
+plugins/deepseek/dsh-deepseek-cost/   插件本体（host 半边 + 浏览器半边 + 自检）
+tools/pkg-release.cjs                 打包 + 发布文件集护栏（CI 也在跑）
+.github/workflows/gates.yml           CI：语法门禁、计价自检、发布文件集护栏
+```
+
+发布流程（维护者）：`node tools/pkg-release.cjs --dry-run` 先过护栏 →
+完整打包拿到 `manifestSha256` → 更新上面那张表 → 挂到 Release。
+细节见插件 README 的「打包发布」一节。
 
 ## 安装
 

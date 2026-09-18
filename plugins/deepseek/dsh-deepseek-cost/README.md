@@ -97,6 +97,31 @@ node verify-mount.cjs        # 假 ctx 调 apply()，验证投影与路由（需
 因使用本插件造成的任何损失（包括但不限于对费用的误判、误以为余额充足等）
 **由使用者自行承担**。
 
+## 打包发布（维护者用）
+
+打包脚本在仓库根目录 `tools/pkg-release.cjs`。白名单是硬编码的，脚本会**自动校验**它：
+
+```bash
+# 只校验（CI 用的就是这条，不产出文件）
+node tools/pkg-release.cjs --dry-run
+
+# 完整打包（跨平台：Windows 用 Compress-Archive，Linux 用 zip）
+node tools/pkg-release.cjs plugins/deepseek/dsh-deepseek-cost dsh-deepseek-cost-vX.Y.Z.zip
+```
+
+它会做三件事：
+
+1. **import 链护栏**：顺着包内每个 js 的 `import ... from './x'` 递归解析，
+   解析不到就报 `FAIL 包内 import 链断裂` 并退出 1。
+   这条是必需的 —— 曾经往 `lib/` 加了 `core.js`（被 `index.js` import）却忘了改白名单，
+   结果打出的包缺文件、装上直接 `ERR_MODULE_NOT_FOUND`。
+   注意它**不是** package.json 的入口，所以光比对 `main`/`exports` 查不出来。
+2. **内容哈希**：给出 `manifestSha256`（对「相对路径 + 字节数 + 文件 sha256」排序后哈希），
+   与压缩器、时间戳无关，同一份源码恒定 —— 发布标识用这个，不要用 zip 自身的 sha256。
+3. **解包回读校验**：把刚打的包解开，逐文件比对内容，条目数必须与白名单完全一致。
+
+拿到 `manifestSha256` 后，更新仓库根 README 的版本表，再挂到 Release 上。
+
 ## License
 
 MIT
